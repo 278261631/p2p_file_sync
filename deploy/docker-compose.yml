@@ -1,0 +1,17 @@
+services:
+  signal:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8765:8765"
+    restart: unless-stopped
+
+  coturn:
+    image: coturn/coturn:latest
+    # Host networking is required for the relay UDP port range.
+    network_mode: host
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    restart: unless-stopped

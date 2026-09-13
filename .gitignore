@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# pfs partial download artifacts
+*.pfs-part
+*.pfs-state
