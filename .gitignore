@@ -220,3 +220,6 @@ __marimo__/
 # pfs partial download artifacts
 *.pfs-part
 *.pfs-state
+
+# pfs GUI settings (project-local)
+pfs.ini

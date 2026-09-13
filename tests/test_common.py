@@ -110,3 +110,20 @@ def test_invite_rejects_garbage():
     except ValueError:
         return
     raise AssertionError("expected ValueError")
+
+
+def test_config_path_prefers_project_dir(monkeypatch):
+    from pfs.common.settings import config_path
+
+    monkeypatch.delenv("PFS_CONFIG", raising=False)
+    path = config_path()
+    assert path.name == "pfs.ini"
+    assert (path.parent / "pyproject.toml").is_file()
+
+
+def test_config_path_env_override(monkeypatch, tmp_path):
+    from pfs.common.settings import config_path
+
+    target = tmp_path / "custom.ini"
+    monkeypatch.setenv("PFS_CONFIG", str(target))
+    assert config_path() == target

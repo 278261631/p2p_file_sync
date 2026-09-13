@@ -28,7 +28,8 @@ dev = [
 
 [project.scripts]
 pfs = "pfs.cli.main:main"
-pfs-gui = "pfs.gui.app:main"
+pfs-publish = "pfs.gui.app:run_publish"
+pfs-receive = "pfs.gui.app:run_receive"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

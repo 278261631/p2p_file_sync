@@ -1,11 +1,15 @@
-"""Desktop entrypoint: Qt event loop on the main thread, asyncio on a worker."""
+"""Desktop entrypoints: separate publisher and receiver apps.
+
+The Qt event loop runs on the main thread; asyncio runs on a worker thread
+(see :mod:`pfs.gui.async_runner`).
+"""
 
 from __future__ import annotations
 
 import sys
 
 
-def main() -> int:
+def _run(window_cls, app_name: str) -> int:
     try:
         from PySide6.QtWidgets import QApplication
     except ImportError as exc:  # noqa: BLE001
@@ -13,14 +17,29 @@ def main() -> int:
         print(f"  ({exc})", file=sys.stderr)
         return 1
 
-    from .main_window import MainWindow
-
-    app = QApplication(sys.argv)
-    app.setApplicationName("pfs")
-
-    window = MainWindow()
+    app = QApplication(sys.argv[:1])
+    app.setApplicationName(app_name)
+    window = window_cls()
     window.show()
     return app.exec()
+
+
+def run_publish() -> int:
+    from .publish_window import PublishWindow
+
+    return _run(PublishWindow, "pfs-publish")
+
+
+def run_receive() -> int:
+    from .receive_window import ReceiveWindow
+
+    return _run(ReceiveWindow, "pfs-receive")
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    mode = args[0].lower() if args else "publish"
+    return run_receive() if mode == "receive" else run_publish()
 
 
 if __name__ == "__main__":

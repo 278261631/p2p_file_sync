@@ -6,7 +6,7 @@ import asyncio
 import os
 import time
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
@@ -29,6 +29,7 @@ from ..common.config import build_ice_servers
 from ..common.human import fmt_duration, fmt_size
 from ..common.invite import Invite
 from ..common.manifest import TYPE_DIR, Entry, expand_selection
+from ..common.settings import load_settings
 from ..receiver.service import ReceiverService
 from .async_runner import AsyncRunner, GuiBridge
 
@@ -47,7 +48,7 @@ class ReceiveTab(QWidget):
         self.entries: list[Entry] = []
         self._updating = False
         self._download_future = None
-        self._settings = QSettings("pfs", "pfs")
+        self._settings = load_settings()
         self._bridge = GuiBridge(self)
         self._build()
         self._restore()

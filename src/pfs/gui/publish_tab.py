@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 
-from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..common.config import DEFAULT_SIGNAL_HOST, DEFAULT_SIGNAL_PORT, build_ice_servers
+from ..common.settings import load_settings
 from ..publisher.service import PublisherService
 from .async_runner import AsyncRunner, GuiBridge
 
@@ -38,7 +38,7 @@ class PublishTab(QWidget):
         self.runner = runner
         self.service: PublisherService | None = None
         self._watch_future = None
-        self._settings = QSettings("pfs", "pfs")
+        self._settings = load_settings()
         self._bridge = GuiBridge(self)
         self._build()
         self._restore()
