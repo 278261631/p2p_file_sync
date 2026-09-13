@@ -1,11 +1,10 @@
-"""Publisher tab: pick a folder, publish it, show the invite code."""
+"""Publisher tab: log in, share a folder, watch online accounts."""
 
 from __future__ import annotations
 
 import asyncio
 
 from PySide6.QtWidgets import (
-    QApplication,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -15,21 +14,15 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMessageBox,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from ..common.config import DEFAULT_SIGNAL_HOST, DEFAULT_SIGNAL_PORT, build_ice_servers
+from ..common.config import build_ice_servers
 from ..common.settings import load_settings
 from ..publisher.service import PublisherService
 from .async_runner import AsyncRunner, GuiBridge
-
-
-def _wrap(layout) -> QWidget:
-    box = QWidget()
-    box.setLayout(layout)
-    return box
+from .login_form import LoginForm
 
 
 class PublishTab(QWidget):
@@ -37,6 +30,7 @@ class PublishTab(QWidget):
         super().__init__()
         self.runner = runner
         self.service: PublisherService | None = None
+        self._publishing = False
         self._watch_future = None
         self._settings = load_settings()
         self._bridge = GuiBridge(self)
@@ -46,7 +40,15 @@ class PublishTab(QWidget):
     def _build(self) -> None:
         layout = QVBoxLayout(self)
 
-        form = QFormLayout()
+        login_box = QGroupBox("登录")
+        login_layout = QVBoxLayout(login_box)
+        self.login_form = LoginForm()
+        self.login_form.login_requested.connect(self._on_login)
+        login_layout.addWidget(self.login_form)
+        layout.addWidget(login_box)
+
+        publish_box = QGroupBox("发布")
+        form = QFormLayout(publish_box)
         self.root_edit = QLineEdit()
         self.root_edit.setReadOnly(True)
         browse = QPushButton("浏览...")
@@ -55,15 +57,25 @@ class PublishTab(QWidget):
         row.addWidget(self.root_edit)
         row.addWidget(browse)
         form.addRow("共享文件夹", _wrap(row))
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("留空则用文件夹名")
+        form.addRow("共享名称", self.name_edit)
+        layout.addWidget(publish_box)
 
-        self.host_edit = QLineEdit(DEFAULT_SIGNAL_HOST)
-        form.addRow("信令服务器", self.host_edit)
+        self.publish_btn = QPushButton("发布")
+        self.publish_btn.setEnabled(False)
+        self.publish_btn.clicked.connect(self._toggle_publish)
+        layout.addWidget(self.publish_btn)
+        self.status_label = QLabel("未发布")
+        layout.addWidget(self.status_label)
 
-        self.port_spin = QSpinBox()
-        self.port_spin.setRange(1, 65535)
-        self.port_spin.setValue(DEFAULT_SIGNAL_PORT)
-        form.addRow("信令端口", self.port_spin)
-        layout.addLayout(form)
+        layout.addWidget(QLabel("已连接的接收方："))
+        self.peers = QListWidget()
+        layout.addWidget(self.peers)
+
+        layout.addWidget(QLabel("当前在线账号："))
+        self.accounts = QListWidget()
+        layout.addWidget(self.accounts)
 
         advanced = QGroupBox("高级（跨网时配置 TURN 中继）")
         adv_form = QFormLayout(advanced)
@@ -77,28 +89,12 @@ class PublishTab(QWidget):
         adv_form.addRow("密码", self.turn_pass_edit)
         layout.addWidget(advanced)
 
-        self.start_btn = QPushButton("开始发布")
-        self.start_btn.clicked.connect(self._toggle)
-        layout.addWidget(self.start_btn)
-
-        layout.addWidget(QLabel("邀请码（发给接收方）："))
-        self.code_edit = QLineEdit()
-        self.code_edit.setReadOnly(True)
-        copy = QPushButton("复制")
-        copy.clicked.connect(self._copy_code)
-        row2 = QHBoxLayout()
-        row2.addWidget(self.code_edit)
-        row2.addWidget(copy)
-        layout.addLayout(row2)
-
-        layout.addWidget(QLabel("已连接的接收方："))
-        self.peers = QListWidget()
-        layout.addWidget(self.peers)
-
     def _restore(self) -> None:
-        root = self._settings.value("publish/root", "")
-        if root:
-            self.root_edit.setText(str(root))
+        self.root_edit.setText(str(self._settings.value("publish/root", "") or ""))
+        self.name_edit.setText(str(self._settings.value("publish/name", "") or ""))
+        self.login_form.host_edit.setText(str(self._settings.value("server/host", self.login_form.host_edit.text())))
+        self.login_form.port_spin.setValue(int(self._settings.value("server/port", self.login_form.port_spin.value())))
+        self.login_form.user_edit.setText(str(self._settings.value("server/user", "") or ""))
 
     def _choose_root(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择要共享的文件夹")
@@ -106,91 +102,124 @@ class PublishTab(QWidget):
             self.root_edit.setText(path)
             self._settings.setValue("publish/root", path)
 
-    def _copy_code(self) -> None:
-        if self.code_edit.text():
-            QApplication.clipboard().setText(self.code_edit.text())
-
-    def _toggle(self) -> None:
-        if self.service is None:
-            self.start_btn.setEnabled(False)
-            self.start_btn.setText("连接中...")
-            self.runner.submit(self._start())
-        else:
-            self.start_btn.setEnabled(False)
-            self.runner.submit(self._stop())
-
-    async def _start(self) -> None:
-        root = self.root_edit.text()
-        if not root:
-            self._bridge.post(lambda: self._fail("请先选择要共享的文件夹"))
+    # -- login --------------------------------------------------------------
+    def _on_login(self) -> None:
+        values = self.login_form.values()
+        if not values["user"]:
+            QMessageBox.warning(self, "提示", "请输入账号")
             return
-        host = self.host_edit.text().strip() or DEFAULT_SIGNAL_HOST
-        port = self.port_spin.value()
+        self.login_form.set_busy(True)
         self.service = PublisherService(
-            root=root,
-            signal_host=host,
-            signal_port=port,
-            host=host,
-            port=port,
-            ice_servers=build_ice_servers(
-                turn_url=self.turn_edit.text().strip() or None,
-                turn_user=self.turn_user_edit.text().strip() or None,
-                turn_pass=self.turn_pass_edit.text() or None,
-            ),
+            signal_host=values["host"],
+            signal_port=values["port"],
+            account=values["user"],
+            password=values["password"],
+            tls=values["tls"],
+            ice_servers=self._ice(),
         )
+        self.runner.submit(self._do_login(values))
+
+    def _ice(self) -> list:
+        return build_ice_servers(
+            turn_url=self.turn_edit.text().strip() or None,
+            turn_user=self.turn_user_edit.text().strip() or None,
+            turn_pass=self.turn_pass_edit.text() or None,
+        )
+
+    async def _do_login(self, values: dict) -> None:
         try:
-            invite = await self.service.start()
+            await self.service.connect_and_login()
         except Exception as exc:  # noqa: BLE001
             await self.service.close()
             self.service = None
-            self._bridge.post(lambda: self._fail(f"发布失败：{exc}"))
+            self._bridge.post(lambda m=str(exc): self._on_login_failed(m))
             return
+        self._bridge.post(lambda: self._on_logged_in(values))
 
-        code = invite.to_code()
-        self._bridge.post(lambda: self._on_started(code))
+    def _on_login_failed(self, message: str) -> None:
+        self.login_form.set_busy(False)
+        QMessageBox.critical(self, "登录失败", message)
+
+    def _on_logged_in(self, values: dict) -> None:
+        self.login_form.set_logged_in(values["user"])
+        self._settings.setValue("server/host", values["host"])
+        self._settings.setValue("server/port", values["port"])
+        self._settings.setValue("server/user", values["user"])
+        self.publish_btn.setEnabled(True)
         self._watch_future = self.runner.submit(self._watch())
 
-    def _on_started(self, code: str) -> None:
-        self.code_edit.setText(code)
-        self.start_btn.setText("停止发布")
-        self.start_btn.setEnabled(True)
+    # -- publish ------------------------------------------------------------
+    def _toggle_publish(self) -> None:
+        if self._publishing:
+            self.publish_btn.setEnabled(False)
+            self.runner.submit(self._do_stop())
+            return
+        root = self.root_edit.text()
+        if not root:
+            QMessageBox.warning(self, "提示", "请先选择要共享的文件夹")
+            return
+        name = self.name_edit.text().strip()
+        self.publish_btn.setEnabled(False)
+        self.publish_btn.setText("发布中...")
+        self.runner.submit(self._do_publish(root, name))
 
-    def _fail(self, message: str) -> None:
-        self.start_btn.setText("开始发布")
-        self.start_btn.setEnabled(True)
+    async def _do_publish(self, root: str, name: str) -> None:
+        try:
+            share_id = await self.service.publish(root, name)
+        except Exception as exc:  # noqa: BLE001
+            self._bridge.post(lambda m=str(exc): self._on_publish_failed(m))
+            return
+        self._bridge.post(lambda: self._on_published(share_id))
+
+    def _on_published(self, share_id: str) -> None:
+        self._publishing = True
+        self.publish_btn.setText("停止发布")
+        self.publish_btn.setEnabled(True)
+        self.status_label.setText(f"已发布：{self.service.share_name} ({share_id})")
+        self._settings.setValue("publish/name", self.service.share_name)
+
+    def _on_publish_failed(self, message: str) -> None:
+        self.publish_btn.setText("发布")
+        self.publish_btn.setEnabled(True)
         QMessageBox.critical(self, "发布失败", message)
 
-    async def _stop(self) -> None:
-        if self._watch_future:
-            self._watch_future.cancel()
-            self._watch_future = None
-        if self.service:
-            await self.service.close()
-            self.service = None
-        self._bridge.post(self._on_stopped)
+    async def _do_stop(self) -> None:
+        try:
+            await self.service.unpublish()
+        finally:
+            self._bridge.post(self._on_stopped)
 
     def _on_stopped(self) -> None:
-        self.code_edit.clear()
-        self.start_btn.setText("开始发布")
-        self.start_btn.setEnabled(True)
+        self._publishing = False
+        self.publish_btn.setText("发布")
+        self.publish_btn.setEnabled(True)
+        self.status_label.setText("未发布")
         self.peers.clear()
 
+    # -- events -------------------------------------------------------------
     async def _watch(self) -> None:
         try:
             while self.service is not None:
-                kind, peer_id = await self.service.next_peer_event()
+                kind, payload = await self.service.next_event()
                 if kind == "joined":
-                    self._bridge.post(lambda pid=peer_id: self.peers.addItem(pid))
-                else:
-                    self._bridge.post(lambda pid=peer_id: self._remove_peer(pid))
+                    self._bridge.post(lambda pid=payload: self.peers.addItem(pid))
+                elif kind == "left":
+                    self._bridge.post(lambda pid=payload: self._remove(self.peers, pid))
+                elif kind == "presence":
+                    self._bridge.post(lambda items=payload: self._set_accounts(items))
         except asyncio.CancelledError:
             pass
 
-    def _remove_peer(self, peer_id: str) -> None:
-        for index in range(self.peers.count()):
-            if self.peers.item(index).text() == peer_id:
-                self.peers.takeItem(index)
+    def _remove(self, widget: QListWidget, text: str) -> None:
+        for index in range(widget.count()):
+            if widget.item(index).text() == text:
+                widget.takeItem(index)
                 return
+
+    def _set_accounts(self, accounts: list) -> None:
+        self.accounts.clear()
+        for name in accounts:
+            self.accounts.addItem(name)
 
     def shutdown(self) -> None:
         if self._watch_future:
@@ -199,3 +228,9 @@ class PublishTab(QWidget):
         if self.service:
             self.runner.submit(self.service.close())
             self.service = None
+
+
+def _wrap(layout) -> QWidget:
+    box = QWidget()
+    box.setLayout(layout)
+    return box

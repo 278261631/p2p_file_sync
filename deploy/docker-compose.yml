@@ -5,6 +5,11 @@ services:
       dockerfile: deploy/Dockerfile
     ports:
       - "8765:8765"
+    environment:
+      PFS_ACCOUNTS: /app/server/accounts.json
+    volumes:
+      # Edit server/accounts.json on the host; it is picked up without rebuild.
+      - ../server/accounts.json:/app/server/accounts.json:ro
     restart: unless-stopped
 
   coturn:

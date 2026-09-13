@@ -1,6 +1,6 @@
 @echo off
-rem pfs - part 2/3: publisher (shares a folder, prints an invite code)
-rem Usage: 2_publisher.bat ["folder"] [signal_host] [signal_port]
+rem pfs - part 2/3: publisher (login, share a folder)
+rem Usage: 2_publisher.bat ["folder"] [server] [port] [account]
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0.."
@@ -16,13 +16,18 @@ if not exist "%ROOT%" (
   exit /b 1
 )
 
-set "SIGNAL_HOST=%~2"
-if "%SIGNAL_HOST%"=="" set "SIGNAL_HOST=127.0.0.1"
-set "SIGNAL_PORT=%~3"
-if "%SIGNAL_PORT%"=="" set "SIGNAL_PORT=8765"
+set "SERVER=%~2"
+if "%SERVER%"=="" set /p "SERVER=Server host [127.0.0.1]: "
+if "%SERVER%"=="" set "SERVER=127.0.0.1"
+set "PORT=%~3"
+if "%PORT%"=="" set /p "PORT=Server port [8765]: "
+if "%PORT%"=="" set "PORT=8765"
+set "USER=%~4"
+if "%USER%"=="" set /p "USER=Account: "
+set /p "PASS=Password: "
 
-echo [pfs] Publishing "%ROOT%" via signaling %SIGNAL_HOST%:%SIGNAL_PORT%
-"%PY%" -m pfs.cli.main serve --root "%ROOT%" --signal-host %SIGNAL_HOST% --signal-port %SIGNAL_PORT% --host %SIGNAL_HOST% --port %SIGNAL_PORT%
+echo [pfs] Publishing "%ROOT%" as %USER% via %SERVER%:%PORT%
+"%PY%" -m pfs.cli.main serve --root "%ROOT%" --server %SERVER% --port %PORT% --user %USER% --password "%PASS%"
 
 echo [pfs] Publisher stopped.
 pause

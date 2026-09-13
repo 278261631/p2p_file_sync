@@ -6,6 +6,7 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY server ./server
 
+RUN [ -f server/accounts.json ] || cp server/accounts.example.json server/accounts.json
 RUN pip install --no-cache-dir ".[server]"
 
 EXPOSE 8765

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import logging
 import os
 import sys
@@ -11,10 +12,17 @@ import time
 
 from ..common.config import DEFAULT_SIGNAL_HOST, DEFAULT_SIGNAL_PORT, build_ice_servers
 from ..common.human import fmt_duration, fmt_size
-from ..common.invite import Invite
 from ..common.manifest import expand_selection
 from ..publisher.service import PublisherService
 from ..receiver.service import ReceiverService
+
+
+def _add_conn_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--server", default=DEFAULT_SIGNAL_HOST, help="signaling server host")
+    parser.add_argument("--port", type=int, default=DEFAULT_SIGNAL_PORT, help="signaling server port")
+    parser.add_argument("--user", required=True, help="account name")
+    parser.add_argument("--password", default=None, help="account password (prompted if omitted)")
+    parser.add_argument("--tls", action="store_true", help="use wss:// (required over the internet)")
 
 
 def _add_ice_args(parser: argparse.ArgumentParser) -> None:
@@ -28,24 +36,22 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="enable debug logging")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    serve = sub.add_parser("serve", help="publish a folder and wait for receivers")
+    serve = sub.add_parser("serve", help="publish a folder")
     serve.add_argument("--root", required=True, help="folder to share")
-    serve.add_argument("--signal-host", default=DEFAULT_SIGNAL_HOST)
-    serve.add_argument("--signal-port", type=int, default=DEFAULT_SIGNAL_PORT)
-    serve.add_argument("--host", default=None, help="host advertised inside the invite code")
-    serve.add_argument("--port", type=int, default=None, help="port advertised inside the invite code")
+    serve.add_argument("--name", default=None, help="share name (defaults to folder name)")
+    _add_conn_args(serve)
     _add_ice_args(serve)
 
-    lst = sub.add_parser("list", help="print the remote file listing")
-    lst.add_argument("invite", help="invite code from the publisher")
-    _add_ice_args(lst)
+    lst = sub.add_parser("list", help="list available shares")
+    _add_conn_args(lst)
 
-    get = sub.add_parser("get", help="download files or folders")
-    get.add_argument("invite", help="invite code from the publisher")
-    get.add_argument("paths", nargs="+", help="file/folder paths as shown by `pfs list`")
+    get = sub.add_parser("get", help="download from a share")
+    get.add_argument("share", help="share name or id (see `pfs list`)")
+    get.add_argument("paths", nargs="+", help="file/folder paths within the share")
     get.add_argument("--dest", default=".", help="destination directory")
     get.add_argument("--concurrency", type=int, default=4, help="chunks requested in parallel")
     get.add_argument("--retries", type=int, default=3, help="retries per chunk")
+    _add_conn_args(get)
     _add_ice_args(get)
     return parser
 
@@ -58,23 +64,33 @@ def _ice(args):
     )
 
 
+def _password(args) -> str:
+    if getattr(args, "password", None):
+        return args.password
+    return getpass.getpass(f"password for {args.user}: ")
+
+
 async def _cmd_serve(args) -> int:
     service = PublisherService(
-        root=args.root,
-        signal_host=args.signal_host,
-        signal_port=args.signal_port,
-        host=args.host,
-        port=args.port,
+        signal_host=args.server,
+        signal_port=args.port,
+        account=args.user,
+        password=_password(args),
+        tls=args.tls,
         ice_servers=_ice(args),
     )
-    invite = await service.start()
-    print(invite.to_code(), flush=True)
-    print("Share the code above. Waiting for receivers (Ctrl+C to stop).", file=sys.stderr, flush=True)
+    share_id = await service.start(args.root, args.name)
+    print(f"{service.share_name}\t{share_id}", flush=True)
+    print(
+        f"published '{service.share_name}' as {args.user}; waiting for receivers (Ctrl+C to stop).",
+        file=sys.stderr,
+        flush=True,
+    )
 
     async def watch() -> None:
         while True:
-            kind, peer_id = await service.next_peer_event()
-            print(f"[{kind}] {peer_id}", file=sys.stderr, flush=True)
+            kind, payload = await service.next_event()
+            print(f"[{kind}] {payload}", file=sys.stderr, flush=True)
 
     watcher = asyncio.create_task(watch())
     try:
@@ -88,33 +104,50 @@ async def _cmd_serve(args) -> int:
 
 
 async def _cmd_list(args) -> int:
-    invite = Invite.from_code(args.invite)
-    service = ReceiverService(invite, dest=".", ice_servers=_ice(args))
+    service = ReceiverService(
+        signal_host=args.server,
+        signal_port=args.port,
+        account=args.user,
+        password=_password(args),
+        dest=".",
+        tls=args.tls,
+        ice_servers=_ice(args),
+    )
     try:
         await service.start()
-        entries = await service.get_manifest()
+        shares = await service.list_shares()
     finally:
         await service.close()
-    for entry in entries:
-        if entry.type == "dir":
-            print(f"{'DIR':>4} {'':>12}  {entry.path}/")
-        else:
-            print(f"{'FILE':>4} {entry.size:>12}  {entry.path}")
+    if not shares:
+        print("(no shares online)")
+        return 0
+    for share in shares:
+        print(f"{share['id']}  {share['owner']:<16} {share['name']:<24} {share['file_count']:>6} files  {fmt_size(share['total_size'])}")
     return 0
 
 
 async def _cmd_get(args) -> int:
-    invite = Invite.from_code(args.invite)
     service = ReceiverService(
-        invite,
+        signal_host=args.server,
+        signal_port=args.port,
+        account=args.user,
+        password=_password(args),
         dest=args.dest,
+        tls=args.tls,
         ice_servers=_ice(args),
         concurrency=args.concurrency,
         max_retries=args.retries,
     )
     await service.start()
     try:
-        entries = await service.get_manifest()
+        shares = await service.list_shares()
+        share = next((s for s in shares if s["name"] == args.share or s["id"] == args.share), None)
+        if share is None:
+            names = ", ".join(s["name"] for s in shares) or "(none)"
+            print(f"share not found: {args.share}; available: {names}", file=sys.stderr)
+            return 1
+
+        entries = await service.get_manifest(share["id"])
         selected = expand_selection(entries, args.paths)
         if not selected:
             print("no matching files", file=sys.stderr)
@@ -123,6 +156,9 @@ async def _cmd_get(args) -> int:
         for entry in entries:
             if entry.type == "dir":
                 os.makedirs(os.path.join(args.dest, entry.path), exist_ok=True)
+
+        print(f"connecting to {share['owner']} / {share['name']} ...", file=sys.stderr)
+        await service.open_share(share["id"])
 
         for entry in selected:
             start = time.monotonic()

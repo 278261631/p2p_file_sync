@@ -1,8 +1,9 @@
-"""Minimal WebSocket signaling server for pfs.
+"""Signaling + directory server for pfs.
 
-Rooms are created by publishers and joined by receivers using the room id +
-token embedded in the invite code.  The server only relays SDP/ICE envelopes
-between peers; file bytes never pass through it.
+Replaces the old invite-code room model with account/password login, a share
+registry, and presence.  Clients authenticate over the WebSocket, publish a
+folder listing, and get brokered to each other for WebRTC data transfer.  File
+bytes never pass through this server.
 
 Run::
 
@@ -13,10 +14,12 @@ from __future__ import annotations
 
 import json
 import logging
-import secrets
 import uuid
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
+from .accounts import AccountStore
+from .registry import Registry
 
 log = logging.getLogger("pfs.signal")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -24,28 +27,43 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 app = FastAPI(title="pfs signaling")
 
 
-class Room:
-    def __init__(self) -> None:
-        self.sid = uuid.uuid4().hex[:12]
-        self.token = secrets.token_urlsafe(12)
-        self.publisher: str | None = None
-        self.receivers: set[str] = set()
+class Client:
+    def __init__(self, peer_id: str, ws: WebSocket):
+        self.peer_id = peer_id
+        self.ws = ws
+        self.account: str | None = None
+
+    @property
+    def logged_in(self) -> bool:
+        return self.account is not None
 
 
 class Hub:
     def __init__(self) -> None:
-        self.connections: dict[str, WebSocket] = {}
-        self.rooms: dict[str, Room] = {}
-        self.peer_room: dict[str, str] = {}
+        self.clients: dict[str, Client] = {}
+        self.accounts: dict[str, set[str]] = {}
+        self.registry = Registry()
+        self.store = AccountStore()
+
+    def online_accounts(self) -> list[str]:
+        return sorted(self.accounts)
 
     async def send(self, peer_id: str, obj: dict) -> None:
-        ws = self.connections.get(peer_id)
-        if ws is None:
+        client = self.clients.get(peer_id)
+        if client is None:
             return
         try:
-            await ws.send_text(json.dumps(obj))
+            await client.ws.send_text(json.dumps(obj))
         except Exception:  # noqa: BLE001 - peer vanished
             log.debug("failed to send to %s", peer_id)
+
+    async def broadcast(self, obj: dict) -> None:
+        for client in list(self.clients.values()):
+            if client.logged_in:
+                await self.send(client.peer_id, obj)
+
+    async def broadcast_presence(self) -> None:
+        await self.broadcast({"t": "presence", "accounts": self.online_accounts()})
 
 
 hub = Hub()
@@ -53,16 +71,21 @@ hub = Hub()
 
 @app.get("/healthz")
 async def healthz() -> dict:
-    return {"ok": True, "rooms": len(hub.rooms), "peers": len(hub.connections)}
+    return {
+        "ok": True,
+        "clients": len(hub.clients),
+        "online_accounts": hub.online_accounts(),
+        "shares": len(hub.registry.list()),
+    }
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     peer_id = uuid.uuid4().hex
-    hub.connections[peer_id] = ws
-    await ws.send_text(json.dumps({"t": "welcome", "peer_id": peer_id}))
-    log.info("peer connected: %s", peer_id)
+    client = Client(peer_id, ws)
+    hub.clients[peer_id] = client
+    await hub.send(peer_id, {"t": "welcome", "peer_id": peer_id})
     try:
         while True:
             raw = await ws.receive_text()
@@ -70,56 +93,96 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 msg = json.loads(raw)
             except (TypeError, ValueError):
                 continue
-            await _handle(peer_id, msg)
+            await _handle(client, msg)
     except WebSocketDisconnect:
         pass
     except Exception:  # noqa: BLE001
         log.exception("websocket error for %s", peer_id)
     finally:
-        await _cleanup(peer_id)
+        await _cleanup(client)
 
 
-async def _handle(peer_id: str, msg: dict) -> None:
+async def _handle(client: Client, msg: dict) -> None:
     kind = msg.get("t")
-    if kind == "create":
-        room = Room()
-        room.publisher = peer_id
-        hub.rooms[room.sid] = room
-        hub.peer_room[peer_id] = room.sid
-        await hub.send(peer_id, {"t": "created", "sid": room.sid, "token": room.token})
-        log.info("room created %s by %s", room.sid, peer_id)
 
-    elif kind == "join":
-        room = hub.rooms.get(msg.get("sid"))
-        if room is None or room.token != msg.get("token"):
-            await hub.send(peer_id, {"t": "error", "msg": "invalid room or token"})
+    if kind == "login":
+        if not hub.store.verify(str(msg.get("name", "")), str(msg.get("password", ""))):
+            await hub.send(client.peer_id, {"t": "error", "msg": "账号或密码错误"})
             return
-        room.receivers.add(peer_id)
-        hub.peer_room[peer_id] = room.sid
-        await hub.send(peer_id, {"t": "joined", "sid": room.sid, "publisher": room.publisher})
-        await hub.send(room.publisher, {"t": "peer_joined", "peer_id": peer_id})
-        log.info("peer %s joined room %s", peer_id, room.sid)
+        account = str(msg["name"])
+        if client.logged_in:
+            hub.accounts.get(client.account, set()).discard(client.peer_id)
+        client.account = account
+        hub.accounts.setdefault(account, set()).add(client.peer_id)
+        await hub.send(client.peer_id, {"t": "login_ok", "account": account})
+        log.info("login: %s (%s)", account, client.peer_id)
+        await hub.broadcast_presence()
+        return
+
+    if not client.logged_in:
+        await hub.send(client.peer_id, {"t": "error", "msg": "未登录"})
+        return
+
+    if kind == "publish":
+        share = msg.get("share") or {}
+        name = str(share.get("name") or "share")
+        entries = list(share.get("entries") or [])
+        record = hub.registry.publish(client.account, client.peer_id, name, entries)
+        await hub.send(client.peer_id, {"t": "published", "share_id": record.id})
+        log.info("share published: %s by %s (%d entries)", name, client.account, len(entries))
+        await hub.broadcast({"t": "shares_changed"})
+
+    elif kind == "unpublish":
+        hub.registry.remove_peer(client.peer_id)
+        await hub.send(client.peer_id, {"t": "unpublished"})
+        await hub.broadcast({"t": "shares_changed"})
+
+    elif kind == "list_shares":
+        await hub.send(client.peer_id, {"t": "shares", "items": [s.summary() for s in hub.registry.list()]})
+
+    elif kind == "get_manifest":
+        share = hub.registry.get(msg.get("share_id"))
+        if share is None:
+            await hub.send(client.peer_id, {"t": "error", "msg": "共享不存在或已离线"})
+            return
+        await hub.send(
+            client.peer_id,
+            {"t": "manifest", "share_id": share.id, "name": share.name, "entries": share.entries},
+        )
+
+    elif kind == "connect":
+        share = hub.registry.get(msg.get("share_id"))
+        if share is None:
+            await hub.send(client.peer_id, {"t": "error", "msg": "共享不存在或已离线"})
+            return
+        owner = hub.clients.get(share.peer_id)
+        if owner is None or not owner.logged_in:
+            await hub.send(client.peer_id, {"t": "error", "msg": "发布方已离线"})
+            return
+        await hub.send(
+            owner.peer_id,
+            {"t": "peer_request", "peer_id": client.peer_id, "share_id": share.id, "account": client.account},
+        )
+        await hub.send(client.peer_id, {"t": "peer_ready", "owner": owner.peer_id, "share_id": share.id})
 
     elif kind == "signal":
         target = msg.get("to")
         if target:
-            await hub.send(target, {"t": "signal", "from": peer_id, "payload": msg.get("payload")})
+            await hub.send(target, {"t": "signal", "from": client.peer_id, "payload": msg.get("payload")})
+
+    elif kind == "ping":
+        await hub.send(client.peer_id, {"t": "pong"})
 
 
-async def _cleanup(peer_id: str) -> None:
-    hub.connections.pop(peer_id, None)
-    sid = hub.peer_room.pop(peer_id, None)
-    log.info("peer disconnected: %s", peer_id)
-    if sid is None:
-        return
-    room = hub.rooms.get(sid)
-    if room is None:
-        return
-    if room.publisher == peer_id:
-        for receiver in list(room.receivers):
-            await hub.send(receiver, {"t": "peer_left", "peer_id": peer_id})
-        hub.rooms.pop(sid, None)
-        log.info("room closed %s", sid)
-    else:
-        room.receivers.discard(peer_id)
-        await hub.send(room.publisher, {"t": "peer_left", "peer_id": peer_id})
+async def _cleanup(client: Client) -> None:
+    hub.clients.pop(client.peer_id, None)
+    hub.registry.remove_peer(client.peer_id)
+    if client.account:
+        peers = hub.accounts.get(client.account)
+        if peers:
+            peers.discard(client.peer_id)
+            if not peers:
+                hub.accounts.pop(client.account, None)
+    log.info("disconnected: %s", client.peer_id)
+    await hub.broadcast_presence()
+    await hub.broadcast({"t": "shares_changed"})

@@ -2,7 +2,6 @@ import hashlib
 
 from pfs.common import protocol as P
 from pfs.common.chunker import CHUNK_SIZE, PartialFile, chunk_count, chunk_ranges, file_sha256
-from pfs.common.invite import Invite
 from pfs.common.manifest import TYPE_DIR, TYPE_FILE, expand_selection, scan_folder
 
 
@@ -93,23 +92,6 @@ def test_partial_file_verify(tmp_path):
     assert partial.compute_sha256() == hashlib.sha256(data).hexdigest()
     partial.finish()
     assert file_sha256(str(target)) == hashlib.sha256(data).hexdigest()
-
-
-def test_invite_roundtrip():
-    inv = Invite("relay.example.com", 8765, "abc123", "tok-xyz", tls=True)
-    code = inv.to_code()
-    assert code.startswith("PFS1.")
-    back = Invite.from_code(code)
-    assert back == inv
-    assert back.ws_url == "wss://relay.example.com:8765/ws"
-
-
-def test_invite_rejects_garbage():
-    try:
-        Invite.from_code("not-a-code")
-    except ValueError:
-        return
-    raise AssertionError("expected ValueError")
 
 
 def test_config_path_prefers_project_dir(monkeypatch):

@@ -223,3 +223,6 @@ __marimo__/
 
 # pfs GUI settings (project-local)
 pfs.ini
+
+# server accounts (local credentials)
+server/accounts.json

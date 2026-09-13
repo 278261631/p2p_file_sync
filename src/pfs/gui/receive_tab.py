@@ -1,4 +1,4 @@
-"""Receiver tab: paste an invite, pick files from the tree, download."""
+"""Receiver tab: log in, browse online shares, download."""
 
 from __future__ import annotations
 
@@ -27,11 +27,11 @@ from PySide6.QtWidgets import (
 
 from ..common.config import build_ice_servers
 from ..common.human import fmt_duration, fmt_size
-from ..common.invite import Invite
 from ..common.manifest import TYPE_DIR, Entry, expand_selection
 from ..common.settings import load_settings
 from ..receiver.service import ReceiverService
 from .async_runner import AsyncRunner, GuiBridge
+from .login_form import LoginForm
 
 
 def _wrap(layout) -> QWidget:
@@ -46,6 +46,7 @@ class ReceiveTab(QWidget):
         self.runner = runner
         self.service: ReceiverService | None = None
         self.entries: list[Entry] = []
+        self._current_share: str | None = None
         self._updating = False
         self._download_future = None
         self._settings = load_settings()
@@ -56,47 +57,53 @@ class ReceiveTab(QWidget):
     def _build(self) -> None:
         layout = QVBoxLayout(self)
 
-        form = QFormLayout()
-        self.invite_edit = QLineEdit()
-        self.invite_edit.setPlaceholderText("PFS1....")
-        form.addRow("邀请码", self.invite_edit)
+        login_box = QGroupBox("登录")
+        login_layout = QVBoxLayout(login_box)
+        self.login_form = LoginForm()
+        self.login_form.login_requested.connect(self._on_login)
+        login_layout.addWidget(self.login_form)
+        layout.addWidget(login_box)
 
+        shares_box = QGroupBox("在线共享")
+        shares_layout = QVBoxLayout(shares_box)
+        row = QHBoxLayout()
+        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.clicked.connect(self._refresh)
+        self.open_btn = QPushButton("打开所选")
+        self.open_btn.setEnabled(False)
+        self.open_btn.clicked.connect(self._open_selected)
+        row.addWidget(self.refresh_btn)
+        row.addWidget(self.open_btn)
+        row.addStretch(1)
+        shares_layout.addLayout(row)
+        self.shares = QTreeWidget()
+        self.shares.setHeaderLabels(["共享名称", "发布方", "文件数", "大小"])
+        self.shares.setColumnWidth(0, 240)
+        shares_layout.addWidget(self.shares)
+        layout.addWidget(shares_box)
+
+        layout.addWidget(QLabel("文件（勾选要下载的内容）："))
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["名称", "大小"])
+        self.tree.setColumnWidth(0, 440)
+        self.tree.itemChanged.connect(self._on_item_changed)
+        layout.addWidget(self.tree)
+
+        form = QFormLayout()
         self.dest_edit = QLineEdit()
         self.dest_edit.setReadOnly(True)
         browse = QPushButton("浏览...")
         browse.clicked.connect(self._choose_dest)
-        row = QHBoxLayout()
-        row.addWidget(self.dest_edit)
-        row.addWidget(browse)
-        form.addRow("保存到", _wrap(row))
-        layout.addLayout(form)
-
-        advanced = QGroupBox("高级（跨网时配置 TURN 中继）")
-        adv_form = QFormLayout(advanced)
-        self.turn_edit = QLineEdit()
-        self.turn_edit.setPlaceholderText("turn:relay.example.com:3478")
-        self.turn_user_edit = QLineEdit()
-        self.turn_pass_edit = QLineEdit()
-        self.turn_pass_edit.setEchoMode(QLineEdit.Password)
+        dest_row = QHBoxLayout()
+        dest_row.addWidget(self.dest_edit)
+        dest_row.addWidget(browse)
+        form.addRow("保存到", _wrap(dest_row))
         self.concurrency_spin = QSpinBox()
         self.concurrency_spin.setRange(1, 16)
         self.concurrency_spin.setValue(4)
-        adv_form.addRow("TURN 地址", self.turn_edit)
-        adv_form.addRow("用户名", self.turn_user_edit)
-        adv_form.addRow("密码", self.turn_pass_edit)
-        adv_form.addRow("并行块数", self.concurrency_spin)
-        layout.addWidget(advanced)
-
-        self.connect_btn = QPushButton("连接")
-        self.connect_btn.clicked.connect(self._on_connect_clicked)
-        layout.addWidget(self.connect_btn)
-
-        layout.addWidget(QLabel("远程文件（勾选要下载的内容）："))
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["名称", "大小"])
-        self.tree.setColumnWidth(0, 460)
-        self.tree.itemChanged.connect(self._on_item_changed)
-        layout.addWidget(self.tree)
+        form.addRow("并行块数", self.concurrency_spin)
+        layout.addLayout(form)
 
         buttons = QHBoxLayout()
         self.download_btn = QPushButton("下载选中")
@@ -116,10 +123,23 @@ class ReceiveTab(QWidget):
         self.log.setReadOnly(True)
         layout.addWidget(self.log)
 
+        advanced = QGroupBox("高级（跨网时配置 TURN 中继）")
+        adv_form = QFormLayout(advanced)
+        self.turn_edit = QLineEdit()
+        self.turn_edit.setPlaceholderText("turn:relay.example.com:3478")
+        self.turn_user_edit = QLineEdit()
+        self.turn_pass_edit = QLineEdit()
+        self.turn_pass_edit.setEchoMode(QLineEdit.Password)
+        adv_form.addRow("TURN 地址", self.turn_edit)
+        adv_form.addRow("用户名", self.turn_user_edit)
+        adv_form.addRow("密码", self.turn_pass_edit)
+        layout.addWidget(advanced)
+
     def _restore(self) -> None:
-        dest = self._settings.value("receive/dest", "")
-        if dest:
-            self.dest_edit.setText(str(dest))
+        self.dest_edit.setText(str(self._settings.value("receive/dest", "") or ""))
+        self.login_form.host_edit.setText(str(self._settings.value("server/host", self.login_form.host_edit.text())))
+        self.login_form.port_spin.setValue(int(self._settings.value("server/port", self.login_form.port_spin.value())))
+        self.login_form.user_edit.setText(str(self._settings.value("server/user", "") or ""))
 
     def _choose_dest(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择保存目录")
@@ -127,66 +147,107 @@ class ReceiveTab(QWidget):
             self.dest_edit.setText(path)
             self._settings.setValue("receive/dest", path)
 
-    # -- connection ---------------------------------------------------------
-    def _on_connect_clicked(self) -> None:
-        code = self.invite_edit.text().strip()
-        if not code:
-            QMessageBox.warning(self, "提示", "请粘贴邀请码")
+    def _ice(self) -> list:
+        return build_ice_servers(
+            turn_url=self.turn_edit.text().strip() or None,
+            turn_user=self.turn_user_edit.text().strip() or None,
+            turn_pass=self.turn_pass_edit.text() or None,
+        )
+
+    # -- login --------------------------------------------------------------
+    def _on_login(self) -> None:
+        values = self.login_form.values()
+        if not values["user"]:
+            QMessageBox.warning(self, "提示", "请输入账号")
             return
-        try:
-            invite = Invite.from_code(code)
-        except ValueError as exc:
-            QMessageBox.critical(self, "邀请码错误", str(exc))
-            return
-
-        dest = self.dest_edit.text()
-        if not dest:
-            dest = QFileDialog.getExistingDirectory(self, "选择保存目录")
-            if not dest:
-                return
-            self.dest_edit.setText(dest)
-
-        self.connect_btn.setEnabled(False)
-        self.connect_btn.setText("连接中...")
-        self.download_btn.setEnabled(False)
-        self.runner.submit(self._do_connect(invite, dest))
-
-    async def _do_connect(self, invite: Invite, dest: str) -> None:
-        if self.service:
-            await self.service.close()
+        self.login_form.set_busy(True)
         self.service = ReceiverService(
-            invite,
-            dest,
-            ice_servers=build_ice_servers(
-                turn_url=self.turn_edit.text().strip() or None,
-                turn_user=self.turn_user_edit.text().strip() or None,
-                turn_pass=self.turn_pass_edit.text() or None,
-            ),
+            signal_host=values["host"],
+            signal_port=values["port"],
+            account=values["user"],
+            password=values["password"],
+            dest=self.dest_edit.text() or ".",
+            tls=values["tls"],
+            ice_servers=self._ice(),
             concurrency=self.concurrency_spin.value(),
         )
+        self.runner.submit(self._do_login(values))
+
+    async def _do_login(self, values: dict) -> None:
         try:
             await self.service.start()
-            self.entries = await self.service.get_manifest()
         except Exception as exc:  # noqa: BLE001
             await self.service.close()
             self.service = None
-            self._bridge.post(lambda m=str(exc): self._on_connect_failed(m))
+            self._bridge.post(lambda m=str(exc): self._on_login_failed(m))
             return
-        self._bridge.post(self._on_connected)
+        self._bridge.post(lambda: self._on_logged_in(values))
 
-    def _on_connected(self) -> None:
+    def _on_login_failed(self, message: str) -> None:
+        self.login_form.set_busy(False)
+        QMessageBox.critical(self, "登录失败", message)
+
+    def _on_logged_in(self, values: dict) -> None:
+        self.login_form.set_logged_in(values["user"])
+        self._settings.setValue("server/host", values["host"])
+        self._settings.setValue("server/port", values["port"])
+        self._settings.setValue("server/user", values["user"])
+        self.refresh_btn.setEnabled(True)
+        self._refresh()
+
+    # -- shares -------------------------------------------------------------
+    def _refresh(self) -> None:
+        if self.service:
+            self.runner.submit(self._do_refresh())
+
+    async def _do_refresh(self) -> None:
+        try:
+            shares = await self.service.list_shares()
+        except Exception as exc:  # noqa: BLE001
+            self._bridge.post(lambda m=str(exc): self.log.appendPlainText(f"刷新失败：{m}"))
+            return
+        self._bridge.post(lambda: self._on_shares(shares))
+
+    def _on_shares(self, shares: list) -> None:
+        self.shares.clear()
+        for share in shares:
+            item = QTreeWidgetItem(
+                [share["name"], share["owner"], str(share["file_count"]), fmt_size(share["total_size"])]
+            )
+            item.setData(0, Qt.UserRole, share["id"])
+            self.shares.addTopLevelItem(item)
+        self.open_btn.setEnabled(self.shares.topLevelItemCount() > 0)
+
+    def _open_selected(self) -> None:
+        item = self.shares.currentItem()
+        if item is None:
+            QMessageBox.information(self, "提示", "请先选择一个共享")
+            return
+        share_id = item.data(0, Qt.UserRole)
+        self.open_btn.setEnabled(False)
+        self.runner.submit(self._do_open(share_id))
+
+    async def _do_open(self, share_id: str) -> None:
+        try:
+            entries = await self.service.get_manifest(share_id)
+        except Exception as exc:  # noqa: BLE001
+            self._bridge.post(lambda m=str(exc): self._on_open_failed(m))
+            return
+        self._current_share = share_id
+        self._bridge.post(lambda: self._on_manifest(entries))
+
+    def _on_open_failed(self, message: str) -> None:
+        self.open_btn.setEnabled(True)
+        QMessageBox.critical(self, "打开失败", message)
+
+    def _on_manifest(self, entries: list) -> None:
+        self.entries = entries
         self._populate()
         self.download_btn.setEnabled(True)
-        self.connect_btn.setEnabled(True)
-        self.connect_btn.setText("重新连接")
-        self.log.appendPlainText(f"已连接，共 {len(self.entries)} 项")
+        self.open_btn.setEnabled(True)
+        self.log.appendPlainText(f"已打开共享，共 {len(entries)} 项")
 
-    def _on_connect_failed(self, message: str) -> None:
-        self.connect_btn.setEnabled(True)
-        self.connect_btn.setText("连接")
-        QMessageBox.critical(self, "连接失败", message)
-
-    # -- tree ---------------------------------------------------------------
+    # -- file tree ----------------------------------------------------------
     def _populate(self) -> None:
         self._updating = True
         self.tree.clear()
@@ -240,7 +301,7 @@ class ReceiveTab(QWidget):
     def _start_download(self) -> None:
         if self._download_future and not self._download_future.done():
             return
-        if not self.service:
+        if not self.service or not self._current_share:
             return
         paths = self._selected_paths()
         if not paths:
@@ -250,9 +311,12 @@ class ReceiveTab(QWidget):
         if not files:
             QMessageBox.information(self, "提示", "没有匹配的文件")
             return
+        dest = self.dest_edit.text() or "."
+        self.service.dest = dest
+        self.service.concurrency = self.concurrency_spin.value()
         self.download_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
-        self._download_future = self.runner.submit(self._download(files, self.dest_edit.text()))
+        self._download_future = self.runner.submit(self._download(files, dest))
 
     def _cancel_download(self) -> None:
         if self._download_future and not self._download_future.done():
@@ -261,9 +325,8 @@ class ReceiveTab(QWidget):
 
     async def _download(self, files: list[Entry], dest: str) -> None:
         try:
-            for entry in self.entries:
-                if entry.type == TYPE_DIR:
-                    os.makedirs(os.path.join(dest, entry.path), exist_ok=True)
+            self._log(f"正在连接 {self._current_share} ...")
+            await self.service.open_share(self._current_share)
 
             total_files = len(files)
             for index, entry in enumerate(files, 1):
