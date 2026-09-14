@@ -27,8 +27,12 @@ rem without TLS. For internet use, front this server with a TLS proxy and drop
 rem PFS_ALLOW_INSECURE (see deploy\Dockerfile).
 set "PFS_ALLOW_INSECURE=1"
 
+rem Rolling logs: logs\signal.log, rotated daily, 7 files kept.
+set "PFS_LOG_DIR=logs"
+
 echo [pfs] Server listening on %HOST%:%PORT% (plaintext, dev only)
 echo [pfs] Accounts file: server\accounts.json
+echo [pfs] Logs: logs\signal.log
 echo [pfs] Press Ctrl+C to stop.
 "%PY%" -m uvicorn server.signal_server:app --host %HOST% --port %PORT%
 

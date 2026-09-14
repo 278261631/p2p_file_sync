@@ -26,6 +26,8 @@ set "USER=%~4"
 if "%USER%"=="" set /p "USER=Account: "
 set /p "PASS=Password: "
 
+set "PFS_LOG_DIR=logs"
+
 echo [pfs] Publishing "%ROOT%" as %USER% via %SERVER%:%PORT%
 "%PY%" -m pfs.cli.main serve --root "%ROOT%" --server %SERVER% --port %PORT% --user %USER% --password "%PASS%"
 

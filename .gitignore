@@ -221,6 +221,9 @@ __marimo__/
 *.pfs-part
 *.pfs-state
 
+# pfs rolling logs (project-local)
+logs/
+
 # pfs GUI settings (project-local)
 pfs.ini
 

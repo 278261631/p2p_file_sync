@@ -7,6 +7,8 @@ cd /d "%~dp0.."
 set "PY=python"
 if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
 
+set "PFS_LOG_DIR=logs"
+
 echo [pfs] Starting receiver GUI...
 "%PY%" -m pfs.gui.app receive
 if errorlevel 1 (

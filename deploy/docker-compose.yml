@@ -14,6 +14,8 @@ services:
     volumes:
       # Edit server/accounts.json on the host; it is picked up without rebuild.
       - ../server/accounts.json:/app/server/accounts.json:ro
+      # Rolling logs (daily, 7 kept) land in deploy/logs/signal.log.
+      - ./logs:/app/logs
     restart: unless-stopped
 
   coturn:

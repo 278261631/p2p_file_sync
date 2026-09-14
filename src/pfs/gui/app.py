@@ -17,6 +17,10 @@ def _run(window_cls, app_name: str) -> int:
         print(f"  ({exc})", file=sys.stderr)
         return 1
 
+    from ..common.logging_setup import setup_logging
+
+    setup_logging(app_name, console=sys.stderr is not None)
+
     app = QApplication(sys.argv[:1])
     app.setApplicationName(app_name)
     window = window_cls()

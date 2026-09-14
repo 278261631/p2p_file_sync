@@ -22,6 +22,8 @@ set "DEST=%~4"
 if "%DEST%"=="" set /p "DEST=Destination folder [.]: "
 if "%DEST%"=="" set "DEST=."
 
+set "PFS_LOG_DIR=logs"
+
 echo [pfs] Shares available:
 "%PY%" -m pfs.cli.main list --server %SERVER% --port %PORT% --user %USER% --password "%PASS%"
 if errorlevel 1 (

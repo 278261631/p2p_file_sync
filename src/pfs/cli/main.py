@@ -12,6 +12,7 @@ import time
 
 from ..common.config import DEFAULT_SIGNAL_HOST, DEFAULT_SIGNAL_PORT, build_ice_servers
 from ..common.human import fmt_duration, fmt_size
+from ..common.logging_setup import setup_logging
 from ..common.manifest import expand_selection
 from ..publisher.service import PublisherService
 from ..receiver.service import ReceiverService
@@ -187,10 +188,7 @@ async def _cmd_get(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    setup_logging(f"pfs-{args.cmd}", level=logging.DEBUG if args.verbose else logging.INFO)
     handlers = {
         "serve": _cmd_serve,
         "list": _cmd_list,

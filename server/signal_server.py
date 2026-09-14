@@ -22,11 +22,13 @@ from collections import deque
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
+from pfs.common.logging_setup import setup_logging
+
 from .accounts import AccountStore
 from .registry import Registry
 
+setup_logging("signal")
 log = logging.getLogger("pfs.signal")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 app = FastAPI(title="pfs signaling")
 

@@ -44,6 +44,7 @@ class PublisherService:
         self.presence: list[str] = []
         self._login: asyncio.Future | None = None
         self._published: asyncio.Future | None = None
+        self._shares: asyncio.Future | None = None
         self._events: asyncio.Queue = asyncio.Queue()
 
     @property
@@ -74,6 +75,13 @@ class PublisherService:
     async def start(self, root: str, share_name: str | None = None) -> str:
         await self.connect_and_login()
         return await self.publish(root, share_name)
+
+    async def list_shares(self, timeout: float = 15.0) -> list[dict]:
+        """List shares currently advertised on the signaling server."""
+        assert self.signaling is not None
+        self._shares = asyncio.get_event_loop().create_future()
+        await self.signaling.send({"t": "list_shares"})
+        return await asyncio.wait_for(self._shares, timeout)
 
     async def next_event(self) -> tuple[str, object]:
         """Await ``(kind, payload)`` where kind is joined/left/presence."""
@@ -106,12 +114,15 @@ class PublisherService:
                 await peer.handle_signal(msg["payload"])
         elif kind == "peer_left":
             await self._drop_peer(msg["peer_id"])
+        elif kind == "shares":
+            if self._shares and not self._shares.done():
+                self._shares.set_result(list(msg.get("items", [])))
         elif kind == "presence":
             self.presence = list(msg.get("accounts", []))
             self._events.put_nowait(("presence", self.presence))
 
     def _fail_pending(self, exc: Exception) -> None:
-        for fut in (self._login, self._published):
+        for fut in (self._login, self._published, self._shares):
             if fut and not fut.done():
                 fut.set_exception(exc)
 

@@ -41,6 +41,7 @@ class ReceiverService:
         self.client: FileClient | None = None
         self.entries: list[Entry] = []
         self.share_id: str | None = None
+        self.presence: list[str] = []
 
         self._login: asyncio.Future | None = None
         self._shares: asyncio.Future | None = None
@@ -114,6 +115,8 @@ class ReceiverService:
         elif kind == "manifest":
             if self._manifest and not self._manifest.done():
                 self._manifest.set_result(msg)
+        elif kind == "presence":
+            self.presence = list(msg.get("accounts", []))
         elif kind == "peer_ready":
             if self._peer_ready and not self._peer_ready.done():
                 self._peer_ready.set_result(msg)

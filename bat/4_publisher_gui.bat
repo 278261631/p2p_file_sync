@@ -7,6 +7,8 @@ cd /d "%~dp0.."
 set "PY=python"
 if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
 
+set "PFS_LOG_DIR=logs"
+
 echo [pfs] Starting publisher GUI...
 "%PY%" -m pfs.gui.app publish
 if errorlevel 1 (
