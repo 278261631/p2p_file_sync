@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..common.config import build_ice_servers
-from ..common.human import fmt_duration, fmt_size
+from ..common.human import exc_text, fmt_duration, fmt_size
 from ..common.manifest import TYPE_DIR, Entry, expand_selection
 from ..common.settings import load_settings
 from ..receiver.service import ReceiverService
@@ -179,7 +179,7 @@ class ReceiveTab(QWidget):
         except Exception as exc:  # noqa: BLE001
             await self.service.close()
             self.service = None
-            self._bridge.post(lambda m=str(exc): self._on_login_failed(m))
+            self._bridge.post(lambda m=exc_text(exc): self._on_login_failed(m))
             return
         self._bridge.post(lambda: self._on_logged_in(values))
 
@@ -204,7 +204,7 @@ class ReceiveTab(QWidget):
         try:
             shares = await self.service.list_shares()
         except Exception as exc:  # noqa: BLE001
-            self._bridge.post(lambda m=str(exc): self.log.appendPlainText(f"刷新失败：{m}"))
+            self._bridge.post(lambda m=exc_text(exc): self.log.appendPlainText(f"刷新失败：{m}"))
             return
         self._bridge.post(lambda: self._on_shares(shares))
 
@@ -231,7 +231,7 @@ class ReceiveTab(QWidget):
         try:
             entries = await self.service.get_manifest(share_id)
         except Exception as exc:  # noqa: BLE001
-            self._bridge.post(lambda m=str(exc): self._on_open_failed(m))
+            self._bridge.post(lambda m=exc_text(exc): self._on_open_failed(m))
             return
         self._current_share = share_id
         self._bridge.post(lambda: self._on_manifest(entries))
@@ -348,7 +348,7 @@ class ReceiveTab(QWidget):
         except asyncio.CancelledError:
             self._log("下载已取消")
         except Exception as exc:  # noqa: BLE001
-            self._bridge.post(lambda m=str(exc): QMessageBox.critical(self, "下载失败", m))
+            self._bridge.post(lambda m=exc_text(exc): QMessageBox.critical(self, "下载失败", m))
         finally:
             self._bridge.post(self._on_download_finished)
 

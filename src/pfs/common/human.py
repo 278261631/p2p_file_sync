@@ -2,6 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
+
+
+def exc_text(exc: BaseException) -> str:
+    """Readable message for an exception, even when ``str(exc)`` is empty.
+
+    Network failures such as a bare ``ConnectionResetError`` or
+    ``asyncio.TimeoutError`` stringify to an empty string, which would
+    otherwise surface as a blank error dialog.
+    """
+    text = str(exc).strip()
+    if text:
+        return text
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return "连接超时"
+    return f"{type(exc).__name__}（无详细信息）"
+
 
 def fmt_size(num: float) -> str:
     value = float(num)

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..common.config import build_ice_servers
+from ..common.human import exc_text
 from ..common.settings import load_settings
 from ..publisher.service import PublisherService
 from .async_runner import AsyncRunner, GuiBridge
@@ -132,7 +133,7 @@ class PublishTab(QWidget):
         except Exception as exc:  # noqa: BLE001
             await self.service.close()
             self.service = None
-            self._bridge.post(lambda m=str(exc): self._on_login_failed(m))
+            self._bridge.post(lambda m=exc_text(exc): self._on_login_failed(m))
             return
         self._bridge.post(lambda: self._on_logged_in(values))
 
@@ -167,7 +168,7 @@ class PublishTab(QWidget):
         try:
             share_id = await self.service.publish(root, name)
         except Exception as exc:  # noqa: BLE001
-            self._bridge.post(lambda m=str(exc): self._on_publish_failed(m))
+            self._bridge.post(lambda m=exc_text(exc): self._on_publish_failed(m))
             return
         self._bridge.post(lambda: self._on_published(share_id))
 

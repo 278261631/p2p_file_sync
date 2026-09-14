@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..common.human import fmt_size
+from ..common.human import exc_text, fmt_size
 from .async_runner import AsyncRunner, GuiBridge
 
 ServiceProvider = Callable[[], object]
@@ -80,7 +80,7 @@ class StatusTab(QWidget):
         try:
             shares = await service.list_shares()
         except Exception as exc:  # noqa: BLE001
-            self._bridge.post(lambda m=str(exc): self._on_error(m))
+            self._bridge.post(lambda m=exc_text(exc): self._on_error(m))
             return
         presence = list(getattr(service, "presence", []) or [])
         self._bridge.post(lambda: self._on_data(service, presence, shares))

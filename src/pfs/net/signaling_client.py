@@ -6,6 +6,7 @@ Only SDP/ICE envelopes flow through here; file bytes never do.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 from typing import Awaitable, Callable
@@ -17,6 +18,23 @@ from .tls import build_client_ssl_context
 log = logging.getLogger(__name__)
 
 MessageHandler = Callable[[dict], Awaitable[None]]
+
+
+def _proxy_kwarg() -> dict:
+    """Disable OS proxy detection on websockets versions that support it.
+
+    websockets >= 15 honors the operating-system proxy by default (Windows
+    registry or ``*_proxy`` env vars).  On machines running a local proxy
+    (Clash/v2ray/etc.) the signaling connection is then routed through it and
+    usually fails with an opaque, empty error.  Older versions never proxied,
+    so pass ``proxy=None`` only when the keyword exists.
+    """
+    try:
+        if "proxy" in inspect.signature(websockets.connect).parameters:
+            return {"proxy": None}
+    except (TypeError, ValueError):
+        pass
+    return {}
 
 
 class SignalingError(RuntimeError):
@@ -32,7 +50,7 @@ class SignalingClient:
         self._recv_task: asyncio.Task | None = None
 
     async def connect(self, timeout: float = 10.0) -> str:
-        kwargs: dict = {"max_size": None}
+        kwargs: dict = {"max_size": None, **_proxy_kwarg()}
         if self.url.startswith("wss"):
             kwargs["ssl"] = build_client_ssl_context()
         self.ws = await asyncio.wait_for(websockets.connect(self.url, **kwargs), timeout)
