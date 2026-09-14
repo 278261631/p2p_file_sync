@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 DEFAULT_SIGNAL_HOST = os.environ.get("PFS_SIGNAL_HOST", "127.0.0.1")
-DEFAULT_SIGNAL_PORT = int(os.environ.get("PFS_SIGNAL_PORT", "8765"))
+DEFAULT_SIGNAL_PORT = int(os.environ.get("PFS_SIGNAL_PORT", "18765"))
 DEFAULT_STUN = os.environ.get("PFS_STUN", "stun:stun.l.google.com:19302")
 
 

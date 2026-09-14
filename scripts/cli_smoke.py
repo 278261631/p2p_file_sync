@@ -54,6 +54,7 @@ def main() -> int:
 
     env = dict(os.environ)
     env["PFS_ACCOUNTS"] = str(accounts)
+    env.setdefault("PFS_ALLOW_INSECURE", "1")
 
     server = _popen(
         [sys.executable, "-m", "uvicorn", "server.signal_server:app", "--host", "127.0.0.1", "--port", str(PORT), "--log-level", "warning"],

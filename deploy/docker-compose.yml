@@ -4,9 +4,13 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     ports:
-      - "8765:8765"
+      - "18765:18765"
     environment:
       PFS_ACCOUNTS: /app/server/accounts.json
+      # Plaintext ws:// is rejected by default. Terminate TLS in a reverse
+      # proxy and set this to the proxy's address so X-Forwarded-Proto is
+      # trusted. Use "*" only when the proxy is the sole ingress.
+      # FORWARDED_ALLOW_IPS: 172.18.0.1
     volumes:
       # Edit server/accounts.json on the host; it is picked up without rebuild.
       - ../server/accounts.json:/app/server/accounts.json:ro

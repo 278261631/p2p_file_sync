@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("PFS_ALLOW_INSECURE", "1")
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
