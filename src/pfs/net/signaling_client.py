@@ -12,6 +12,8 @@ from typing import Awaitable, Callable
 
 import websockets
 
+from .tls import build_client_ssl_context
+
 log = logging.getLogger(__name__)
 
 MessageHandler = Callable[[dict], Awaitable[None]]
@@ -30,7 +32,10 @@ class SignalingClient:
         self._recv_task: asyncio.Task | None = None
 
     async def connect(self, timeout: float = 10.0) -> str:
-        self.ws = await asyncio.wait_for(websockets.connect(self.url, max_size=None), timeout)
+        kwargs: dict = {"max_size": None}
+        if self.url.startswith("wss"):
+            kwargs["ssl"] = build_client_ssl_context()
+        self.ws = await asyncio.wait_for(websockets.connect(self.url, **kwargs), timeout)
         welcome = json.loads(await asyncio.wait_for(self.ws.recv(), timeout))
         if welcome.get("t") != "welcome":
             raise SignalingError(f"unexpected greeting: {welcome!r}")
@@ -59,13 +64,19 @@ class SignalingClient:
         await self.ws.send(json.dumps(obj))
 
     async def close(self) -> None:
-        if self._recv_task:
-            self._recv_task.cancel()
+        """Idempotent shutdown; never raises so it is safe from a loop teardown."""
+        recv, self._recv_task = self._recv_task, None
+        if recv is not None:
+            recv.cancel()
             try:
-                await self._recv_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                await recv
+            except asyncio.CancelledError:
                 pass
-            self._recv_task = None
-        if self.ws is not None:
-            await self.ws.close()
-            self.ws = None
+            except Exception:  # noqa: BLE001
+                log.debug("signaling receive loop error on close", exc_info=True)
+        ws, self.ws = self.ws, None
+        if ws is not None:
+            try:
+                await ws.close()
+            except Exception:  # noqa: BLE001
+                log.debug("error closing signaling websocket", exc_info=True)

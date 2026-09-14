@@ -227,6 +227,9 @@ logs/
 # pfs self-contained interpreter (python-build-standalone)
 .python/
 
+# generated Caddy reverse-proxy config (site-specific)
+deploy/Caddyfile
+
 # pfs GUI settings (project-local)
 pfs.ini
 

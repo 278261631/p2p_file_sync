@@ -137,6 +137,11 @@ class ReceiverService:
 
     async def close(self) -> None:
         if self.peer:
-            await self.peer.close()
+            try:
+                await self.peer.close()
+            except Exception:  # noqa: BLE001
+                log.debug("error closing peer", exc_info=True)
+            self.peer = None
         if self.signaling:
             await self.signaling.close()
+            self.signaling = None

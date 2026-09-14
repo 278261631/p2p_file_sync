@@ -12,6 +12,7 @@ license = { text = "MIT" }
 dependencies = [
     "aiortc>=1.9",
     "websockets>=12",
+    "certifi>=2023.7",
 ]
 
 [project.optional-dependencies]

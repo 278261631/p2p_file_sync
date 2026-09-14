@@ -1,4 +1,5 @@
 import json
+import os
 
 from server.accounts import AccountStore, hash_password, verify_password_hash
 from server.registry import Registry
@@ -43,6 +44,10 @@ def test_account_store_reloads_on_change(tmp_path):
         json.dumps({"users": [{"name": "alice", "password": "pw"}, {"name": "carol", "password": "x"}]}),
         encoding="utf-8",
     )
+    # Bump mtime explicitly: two writes in the same filesystem timestamp tick
+    # would otherwise not trigger the store's mtime-based reload.
+    stat = path.stat()
+    os.utime(path, (stat.st_atime, stat.st_mtime + 10))
     assert store.names() == ["alice", "carol"]
 
 

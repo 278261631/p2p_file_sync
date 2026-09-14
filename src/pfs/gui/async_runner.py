@@ -38,9 +38,38 @@ class AsyncRunner(QObject):
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     def stop(self) -> None:
+        """Let already-submitted work finish, then stop the loop.
+
+        Stopping the loop while a ``service.close()`` (or any other coroutine) is
+        still pending tears down the SSL transport mid-write, which surfaces as
+        "Task was destroyed but it is pending" / "Fatal error on SSL transport".
+        """
         if self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(self._drain(), self._loop).result(timeout=8)
+            except Exception:  # noqa: BLE001 - best effort during shutdown
+                pass
             self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=3)
+
+    async def _drain(self, grace: float = 5.0) -> None:
+        """Wait for pending tasks to settle, then cancel whatever is left."""
+        current = asyncio.current_task()
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + grace
+        while True:
+            pending = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+            if not pending:
+                return
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            await asyncio.wait(pending, timeout=remaining)
+        pending = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
 
 class GuiBridge(QObject):

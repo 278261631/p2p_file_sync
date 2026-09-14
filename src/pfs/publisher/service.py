@@ -154,7 +154,10 @@ class PublisherService:
 
     async def close(self) -> None:
         for peer in list(self.peers.values()):
-            await peer.close()
+            try:
+                await peer.close()
+            except Exception:  # noqa: BLE001 - keep closing the rest
+                log.debug("error closing peer", exc_info=True)
         self.peers.clear()
         self.servers.clear()
         if self.signaling:
