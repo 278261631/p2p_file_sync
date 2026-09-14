@@ -224,6 +224,9 @@ __marimo__/
 # pfs rolling logs (project-local)
 logs/
 
+# pfs self-contained interpreter (python-build-standalone)
+.python/
+
 # pfs GUI settings (project-local)
 pfs.ini
 
