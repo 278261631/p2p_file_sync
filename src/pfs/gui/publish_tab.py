@@ -105,8 +105,12 @@ class PublishTab(QWidget):
         self.name_edit.setText(str(self._settings.value("publish/name", "") or ""))
         self.login_form.host_edit.setText(str(self._settings.value("server/host", self.login_form.host_edit.text())))
         self.login_form.port_spin.setValue(int(self._settings.value("server/port", self.login_form.port_spin.value())))
-        self.login_form.user_edit.setText(str(self._settings.value("server/user", "") or ""))
-        self.login_form.password_edit.setText(str(self._settings.value("server/password", "") or ""))
+        self.login_form.user_edit.setText(
+            str(self._settings.value("publish/user", self._settings.value("server/user", "")) or "")
+        )
+        self.login_form.password_edit.setText(
+            str(self._settings.value("publish/password", self._settings.value("server/password", "")) or "")
+        )
         self.login_form.tls_check.setChecked(self._settings.value("server/tls", False, type=bool))
         self.turn_edit.setText(str(self._settings.value("turn/url", "") or ""))
         self.turn_user_edit.setText(str(self._settings.value("turn/user", "") or ""))
@@ -116,8 +120,8 @@ class PublishTab(QWidget):
         form = self.login_form
         self._settings.setValue("server/host", form.host_edit.text().strip())
         self._settings.setValue("server/port", form.port_spin.value())
-        self._settings.setValue("server/user", form.user_edit.text().strip())
-        self._settings.setValue("server/password", form.password_edit.text())
+        self._settings.setValue("publish/user", form.user_edit.text().strip())
+        self._settings.setValue("publish/password", form.password_edit.text())
         self._settings.setValue("server/tls", form.tls_check.isChecked())
         self._settings.setValue("turn/url", self.turn_edit.text().strip())
         self._settings.setValue("turn/user", self.turn_user_edit.text().strip())

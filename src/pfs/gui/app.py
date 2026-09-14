@@ -6,15 +6,32 @@ The Qt event loop runs on the main thread; asyncio runs on a worker thread
 
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
+
+
+def _startup_error(message: str, app_name: str) -> None:
+    """Report a startup failure; ``pythonw`` has no stderr, so also log to file."""
+    if sys.stderr is not None:
+        print(message, file=sys.stderr)
+    try:
+        log_dir = Path(os.environ.get("PFS_LOG_DIR", "logs"))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with (log_dir / f"{app_name}-startup.log").open("a", encoding="utf-8") as fh:
+            fh.write(message + "\n")
+    except OSError:
+        pass
 
 
 def _run(window_cls, app_name: str) -> int:
     try:
         from PySide6.QtWidgets import QApplication
     except ImportError as exc:  # noqa: BLE001
-        print("GUI dependencies missing. Install with: pip install 'pfs[gui]'", file=sys.stderr)
-        print(f"  ({exc})", file=sys.stderr)
+        _startup_error(
+            f"GUI dependencies missing. Install with: pip install 'pfs[gui]'\n  ({exc})",
+            app_name,
+        )
         return 1
 
     from ..common.logging_setup import setup_logging
