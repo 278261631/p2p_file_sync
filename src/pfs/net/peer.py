@@ -13,6 +13,8 @@ from aiortc import (
     RTCSessionDescription,
 )
 
+from .ice import classify_path
+
 log = logging.getLogger(__name__)
 
 CTRL_LABEL = "ctrl"
@@ -153,6 +155,18 @@ class Peer:
                     candidate=cand["candidate"],
                 )
             )
+
+    async def ice_path(self) -> str | None:
+        """Classify the active ICE path: ``"relay"``, ``"direct"`` or ``None``.
+
+        ``"relay"`` means at least one side of the selected candidate pair is a
+        TURN-relayed address, so this connection's bytes are relayed.
+        """
+        try:
+            report = await self.pc.getStats()
+        except Exception:  # noqa: BLE001 - stats are best-effort
+            return None
+        return classify_path(report)
 
     async def close(self) -> None:
         try:

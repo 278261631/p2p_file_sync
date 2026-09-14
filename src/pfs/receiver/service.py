@@ -42,6 +42,9 @@ class ReceiverService:
         self.entries: list[Entry] = []
         self.share_id: str | None = None
         self.presence: list[str] = []
+        # Traffic accounting: bytes received, classified by ICE path.
+        self._path = "unknown"
+        self._recv_by_path = {"direct": 0, "relay": 0, "unknown": 0}
 
         self._login: asyncio.Future | None = None
         self._shares: asyncio.Future | None = None
@@ -86,7 +89,14 @@ class ReceiverService:
 
         info = await asyncio.wait_for(self._peer_ready, timeout)
         owner = info["owner"]
-        self.client = FileClient(None, self.dest, concurrency=self.concurrency, max_retries=self.max_retries)
+        self._path = "unknown"
+        self.client = FileClient(
+            None,
+            self.dest,
+            concurrency=self.concurrency,
+            max_retries=self.max_retries,
+            on_recv=self._on_recv,
+        )
         self.peer = Peer(
             self.signaling,
             owner,
@@ -103,6 +113,32 @@ class ReceiverService:
     def _on_open(self) -> None:
         if self._open and not self._open.done():
             self._open.set_result(True)
+        if self.peer is not None:
+            asyncio.ensure_future(self._classify())
+
+    # -- traffic accounting -------------------------------------------------
+    def _on_recv(self, count: int) -> None:
+        path = self._path if self._path in self._recv_by_path else "unknown"
+        self._recv_by_path[path] += count
+
+    async def _classify(self) -> None:
+        """Determine whether this connection goes through TURN or is direct."""
+        peer = self.peer
+        if peer is None:
+            return
+        path: str | None = None
+        for _ in range(5):
+            path = await peer.ice_path()
+            if path or self.peer is not peer:
+                break
+            await asyncio.sleep(0.5)
+        if path:
+            self._path = path
+            log.info("connection path=%s", path)
+
+    def traffic_snapshot(self) -> dict:
+        """Return ``{"totals": {"direct": .., "relay": .., "unknown": ..}, "path": ..}``."""
+        return {"totals": dict(self._recv_by_path), "path": self._path}
 
     async def _on_message(self, msg: dict) -> None:
         kind = msg.get("t")

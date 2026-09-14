@@ -42,6 +42,9 @@ class PublisherService:
         self.peers: dict[str, Peer] = {}
         self.servers: dict[str, FileServer] = {}
         self.presence: list[str] = []
+        # Traffic accounting: bytes served per peer, classified by ICE path.
+        self._paths: dict[str, str] = {}
+        self._peer_bytes: dict[str, int] = {}
         self._login: asyncio.Future | None = None
         self._published: asyncio.Future | None = None
         self._shares: asyncio.Future | None = None
@@ -64,6 +67,8 @@ class PublisherService:
         assert self.signaling is not None
         self.root = root
         self.share_name = share_name or os.path.basename(os.path.abspath(root)) or "share"
+        self._paths.clear()
+        self._peer_bytes.clear()
         entries = scan_folder(root)
         self._published = asyncio.get_event_loop().create_future()
         await self.signaling.send(
@@ -94,6 +99,8 @@ class PublisherService:
             await peer.close()
         self.peers.clear()
         self.servers.clear()
+        self._paths.clear()
+        self._peer_bytes.clear()
         self.share_id = None
 
     async def _on_message(self, msg: dict) -> None:
@@ -129,20 +136,55 @@ class PublisherService:
     def _add_peer(self, peer_id: str) -> None:
         if peer_id in self.peers:
             return
-        server = FileServer(None, self.root)
+        server = FileServer(None, self.root, on_sent=lambda n, pid=peer_id: self._on_bytes(pid, n))
         peer = Peer(
             self.signaling,
             peer_id,
             self.ice_servers,
             on_ctrl=server.on_ctrl,
             on_data=_noop_data,
+            on_open=lambda pid=peer_id: asyncio.ensure_future(self._classify(pid)),
             on_close=lambda pid=peer_id: asyncio.ensure_future(self._drop_peer(pid)),
         )
         server.peer = peer
         self.peers[peer_id] = peer
         self.servers[peer_id] = server
+        self._paths.setdefault(peer_id, "unknown")
+        self._peer_bytes.setdefault(peer_id, 0)
         self._events.put_nowait(("joined", peer_id))
         log.info("receiver connected: %s", peer_id)
+
+    # -- traffic accounting -------------------------------------------------
+    def _on_bytes(self, peer_id: str, count: int) -> None:
+        self._peer_bytes[peer_id] = self._peer_bytes.get(peer_id, 0) + count
+        self._events.put_nowait(("traffic", self.traffic_snapshot()))
+
+    async def _classify(self, peer_id: str) -> None:
+        """Determine whether this connection goes through TURN or is direct."""
+        peer = self.peers.get(peer_id)
+        if peer is None:
+            return
+        path: str | None = None
+        for _ in range(5):
+            path = await peer.ice_path()
+            if path or peer_id not in self.peers:
+                break
+            await asyncio.sleep(0.5)
+        if not path:
+            return
+        self._paths[peer_id] = path
+        log.info("peer %s path=%s", peer_id, path)
+        self._events.put_nowait(("traffic", self.traffic_snapshot()))
+
+    def traffic_snapshot(self) -> dict:
+        """Return ``{"direct": bytes, "relay": bytes, "unknown": bytes, "peers": {...}}``."""
+        totals = {"direct": 0, "relay": 0, "unknown": 0}
+        peers: dict[str, dict] = {}
+        for peer_id, count in self._peer_bytes.items():
+            path = self._paths.get(peer_id, "unknown")
+            totals[path] = totals.get(path, 0) + count
+            peers[peer_id] = {"path": path, "bytes": count}
+        return {"totals": totals, "peers": peers}
 
     async def _drop_peer(self, peer_id: str) -> None:
         peer = self.peers.pop(peer_id, None)

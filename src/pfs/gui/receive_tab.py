@@ -6,7 +6,7 @@ import asyncio
 import os
 import time
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
@@ -53,6 +53,11 @@ class ReceiveTab(QWidget):
         self._bridge = GuiBridge(self)
         self._build()
         self._restore()
+
+        self._traffic_timer = QTimer(self)
+        self._traffic_timer.setInterval(1000)
+        self._traffic_timer.timeout.connect(self._update_traffic)
+        self._traffic_timer.start()
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
@@ -122,6 +127,16 @@ class ReceiveTab(QWidget):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         layout.addWidget(self.log)
+
+        traffic_box = QGroupBox("流量统计")
+        traffic_form = QFormLayout(traffic_box)
+        self.direct_label = QLabel("0B")
+        self.relay_label = QLabel("0B")
+        self.unknown_label = QLabel("0B")
+        traffic_form.addRow("直连 P2P", self.direct_label)
+        traffic_form.addRow("中转 TURN", self.relay_label)
+        traffic_form.addRow("未知路径", self.unknown_label)
+        layout.addWidget(traffic_box)
 
         advanced = QGroupBox("高级（跨网时配置 TURN 中继）")
         adv_form = QFormLayout(advanced)
@@ -356,6 +371,13 @@ class ReceiveTab(QWidget):
         self.progress.setValue(value)
         self.progress.setFormat(text)
 
+    def _update_traffic(self) -> None:
+        snapshot = self.service.traffic_snapshot() if self.service else {"totals": {}}
+        totals = snapshot.get("totals", {})
+        self.direct_label.setText(fmt_size(totals.get("direct", 0)))
+        self.relay_label.setText(fmt_size(totals.get("relay", 0)))
+        self.unknown_label.setText(fmt_size(totals.get("unknown", 0)))
+
     def _on_download_finished(self) -> None:
         self.download_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
@@ -366,6 +388,7 @@ class ReceiveTab(QWidget):
         self._bridge.post(lambda m=message: self.log.appendPlainText(m))
 
     def shutdown(self) -> None:
+        self._traffic_timer.stop()
         if self._download_future and not self._download_future.done():
             self._download_future.cancel()
         if self.service:

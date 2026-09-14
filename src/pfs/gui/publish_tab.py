@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..common.config import build_ice_servers
-from ..common.human import exc_text
+from ..common.human import exc_text, fmt_size
 from ..common.settings import load_settings
 from ..publisher.service import PublisherService
 from .async_runner import AsyncRunner, GuiBridge
@@ -77,6 +77,16 @@ class PublishTab(QWidget):
         layout.addWidget(QLabel("当前在线账号："))
         self.accounts = QListWidget()
         layout.addWidget(self.accounts)
+
+        traffic_box = QGroupBox("流量统计")
+        traffic_form = QFormLayout(traffic_box)
+        self.direct_label = QLabel("0B")
+        self.relay_label = QLabel("0B")
+        self.unknown_label = QLabel("0B")
+        traffic_form.addRow("直连 P2P", self.direct_label)
+        traffic_form.addRow("中转 TURN", self.relay_label)
+        traffic_form.addRow("未知路径", self.unknown_label)
+        layout.addWidget(traffic_box)
 
         advanced = QGroupBox("高级（跨网时配置 TURN 中继）")
         adv_form = QFormLayout(advanced)
@@ -178,6 +188,7 @@ class PublishTab(QWidget):
         self.publish_btn.setEnabled(True)
         self.status_label.setText(f"已发布：{self.service.share_name} ({share_id})")
         self._settings.setValue("publish/name", self.service.share_name)
+        self._set_traffic({})
 
     def _on_publish_failed(self, message: str) -> None:
         self.publish_btn.setText("发布")
@@ -196,6 +207,7 @@ class PublishTab(QWidget):
         self.publish_btn.setEnabled(True)
         self.status_label.setText("未发布")
         self.peers.clear()
+        self._set_traffic({})
 
     # -- events -------------------------------------------------------------
     async def _watch(self) -> None:
@@ -208,8 +220,16 @@ class PublishTab(QWidget):
                     self._bridge.post(lambda pid=payload: self._remove(self.peers, pid))
                 elif kind == "presence":
                     self._bridge.post(lambda items=payload: self._set_accounts(items))
+                elif kind == "traffic":
+                    self._bridge.post(lambda snap=payload: self._set_traffic(snap))
         except asyncio.CancelledError:
             pass
+
+    def _set_traffic(self, snapshot: dict) -> None:
+        totals = snapshot.get("totals", {})
+        self.direct_label.setText(fmt_size(totals.get("direct", 0)))
+        self.relay_label.setText(fmt_size(totals.get("relay", 0)))
+        self.unknown_label.setText(fmt_size(totals.get("unknown", 0)))
 
     def _remove(self, widget: QListWidget, text: str) -> None:
         for index in range(widget.count()):

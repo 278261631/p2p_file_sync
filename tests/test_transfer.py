@@ -44,12 +44,45 @@ def test_file_server_manifest_and_chunk(tmp_path):
     assert digest == hashlib.sha256(b"hello").digest()
 
 
+def test_file_server_counts_sent_bytes(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.bin").write_bytes(b"x" * 1000)
+
+    peer = FakePeer()
+    counts: list[int] = []
+    server = FileServer(peer, str(root), on_sent=counts.append)
+
+    asyncio.run(server._serve_chunk({"id": 0, "path": "a.bin", "offset": 0, "length": 1000}))
+    frame_len = len(peer.data.sent[-1])
+    assert server.bytes_sent == frame_len
+    assert counts == [frame_len]
+
+    asyncio.run(server._serve_chunk({"id": 1, "path": "a.bin", "offset": 0, "length": 500}))
+    assert server.bytes_sent == frame_len + len(peer.data.sent[-1])
+    assert counts[-1] == len(peer.data.sent[-1])
+
+
 def test_file_server_rejects_path_traversal(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     server = FileServer(FakePeer(), str(root))
     assert server._resolve("../secret") is None
     assert server._resolve("a/../../secret") is None
+
+
+def test_file_client_counts_received_bytes():
+    counts: list[int] = []
+    client = FileClient(FakePeer(), ".", on_recv=counts.append)
+
+    frame = P.encode_chunk(0, 0, hashlib.sha256(b"hi").digest(), b"hi")
+    client.on_data(frame)
+    assert client.bytes_received == len(frame)
+    assert counts == [len(frame)]
+
+    client.on_data(b"short")  # malformed: not counted
+    assert client.bytes_received == len(frame)
+    assert counts == [len(frame)]
 
 
 def test_chunk_retry_succeeds_after_failures(monkeypatch, tmp_path):

@@ -32,9 +32,11 @@ async def _drain(channel) -> None:
 class FileServer:
     """Serves a folder to one connected receiver."""
 
-    def __init__(self, peer, root: str):
+    def __init__(self, peer, root: str, on_sent: Callable[[int], None] | None = None):
         self.peer = peer
         self.root = os.path.abspath(root)
+        self.on_sent = on_sent
+        self.bytes_sent = 0
         self._entries: list[Entry] | None = None
         self._hash_cache: dict[str, str] = {}
         self._send_lock = asyncio.Lock()
@@ -72,6 +74,9 @@ class FileServer:
         async with self._send_lock:
             await _drain(self.peer.data)
             self.peer.data.send(frame)
+        self.bytes_sent += len(frame)
+        if self.on_sent is not None:
+            self.on_sent(len(frame))
 
     async def _serve_verify(self, rel: str) -> None:
         full = self._resolve(rel)
@@ -111,12 +116,21 @@ class FileClient:
     abort the whole file.
     """
 
-    def __init__(self, peer, dest: str, concurrency: int = 4, max_retries: int = 3):
+    def __init__(
+        self,
+        peer,
+        dest: str,
+        concurrency: int = 4,
+        max_retries: int = 3,
+        on_recv: Callable[[int], None] | None = None,
+    ):
         self.peer = peer
         self.dest = os.path.abspath(dest)
         self.entries: list[Entry] | None = None
         self.concurrency = max(1, concurrency)
         self.max_retries = max(0, max_retries)
+        self.on_recv = on_recv
+        self.bytes_received = 0
         self._rid = 0
         self._chunk_waiters: dict[int, asyncio.Future] = {}
         self._manifest_waiter: asyncio.Future | None = None
@@ -141,6 +155,9 @@ class FileClient:
         except ValueError:
             log.warning("dropping malformed data frame")
             return
+        self.bytes_received += len(buf)
+        if self.on_recv is not None:
+            self.on_recv(len(buf))
         fut = self._chunk_waiters.get(rid)
         if fut is None or fut.done():
             return
