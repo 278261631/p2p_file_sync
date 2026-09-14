@@ -152,9 +152,28 @@ class ReceiveTab(QWidget):
 
     def _restore(self) -> None:
         self.dest_edit.setText(str(self._settings.value("receive/dest", "") or ""))
+        self.concurrency_spin.setValue(int(self._settings.value("receive/concurrency", self.concurrency_spin.value())))
         self.login_form.host_edit.setText(str(self._settings.value("server/host", self.login_form.host_edit.text())))
         self.login_form.port_spin.setValue(int(self._settings.value("server/port", self.login_form.port_spin.value())))
         self.login_form.user_edit.setText(str(self._settings.value("server/user", "") or ""))
+        self.login_form.password_edit.setText(str(self._settings.value("server/password", "") or ""))
+        self.login_form.tls_check.setChecked(self._settings.value("server/tls", False, type=bool))
+        self.turn_edit.setText(str(self._settings.value("turn/url", "") or ""))
+        self.turn_user_edit.setText(str(self._settings.value("turn/user", "") or ""))
+        self.turn_pass_edit.setText(str(self._settings.value("turn/pass", "") or ""))
+
+    def _save_settings(self) -> None:
+        form = self.login_form
+        self._settings.setValue("server/host", form.host_edit.text().strip())
+        self._settings.setValue("server/port", form.port_spin.value())
+        self._settings.setValue("server/user", form.user_edit.text().strip())
+        self._settings.setValue("server/password", form.password_edit.text())
+        self._settings.setValue("server/tls", form.tls_check.isChecked())
+        self._settings.setValue("turn/url", self.turn_edit.text().strip())
+        self._settings.setValue("turn/user", self.turn_user_edit.text().strip())
+        self._settings.setValue("turn/pass", self.turn_pass_edit.text())
+        self._settings.setValue("receive/dest", self.dest_edit.text())
+        self._settings.setValue("receive/concurrency", self.concurrency_spin.value())
 
     def _choose_dest(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择保存目录")
@@ -175,6 +194,7 @@ class ReceiveTab(QWidget):
         if not values["user"]:
             QMessageBox.warning(self, "提示", "请输入账号")
             return
+        self._save_settings()
         self.login_form.set_busy(True)
         self.service = ReceiverService(
             signal_host=values["host"],
@@ -204,9 +224,6 @@ class ReceiveTab(QWidget):
 
     def _on_logged_in(self, values: dict) -> None:
         self.login_form.set_logged_in(values["user"])
-        self._settings.setValue("server/host", values["host"])
-        self._settings.setValue("server/port", values["port"])
-        self._settings.setValue("server/user", values["user"])
         self.refresh_btn.setEnabled(True)
         self._refresh()
 
@@ -388,6 +405,7 @@ class ReceiveTab(QWidget):
         self._bridge.post(lambda m=message: self.log.appendPlainText(m))
 
     def shutdown(self) -> None:
+        self._save_settings()
         self._traffic_timer.stop()
         if self._download_future and not self._download_future.done():
             self._download_future.cancel()
