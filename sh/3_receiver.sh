@@ -4,8 +4,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PY=python3
-if [ -x ".venv/bin/python" ]; then PY=".venv/bin/python"; fi
+. "sh/_lib.sh"
+pfs_setup_python
 
 SERVER="${1:-}"
 if [ -z "$SERVER" ]; then read -r -p "Server host [127.0.0.1]: " SERVER; fi

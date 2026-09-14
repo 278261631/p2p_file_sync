@@ -3,8 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PY=python3
-if [ -x ".venv/bin/python" ]; then PY=".venv/bin/python"; fi
+. "sh/_lib.sh"
+pfs_setup_python
 
 echo "[pfs] Installing dependencies with \"$PY\" ..."
 "$PY" -m pip install -e ".[gui,server,dev]"

@@ -4,8 +4,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PY=python3
-if [ -x ".venv/bin/python" ]; then PY=".venv/bin/python"; fi
+. "sh/_lib.sh"
+pfs_setup_python
 
 ROOT="${1:-}"
 if [ -z "$ROOT" ]; then read -r -p "Folder to share: " ROOT; fi

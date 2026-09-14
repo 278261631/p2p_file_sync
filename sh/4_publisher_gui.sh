@@ -3,8 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PY=python3
-if [ -x ".venv/bin/python" ]; then PY=".venv/bin/python"; fi
+. "sh/_lib.sh"
+pfs_setup_python
 
 export PFS_LOG_DIR=logs
 

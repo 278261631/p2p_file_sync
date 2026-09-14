@@ -4,8 +4,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PY=python3
-if [ -x ".venv/bin/python" ]; then PY=".venv/bin/python"; fi
+. "sh/_lib.sh"
+pfs_setup_python
 
 if [ ! -f "server/accounts.json" ]; then
   if [ -f "server/accounts.example.json" ]; then
